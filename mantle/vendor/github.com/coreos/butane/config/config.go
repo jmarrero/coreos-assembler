@@ -24,7 +24,11 @@ import (
 	fcos1_3 "github.com/coreos/butane/config/fcos/v1_3"
 	fcos1_4 "github.com/coreos/butane/config/fcos/v1_4"
 	fcos1_5_exp "github.com/coreos/butane/config/fcos/v1_5_exp"
-	openshift4_10_exp "github.com/coreos/butane/config/openshift/v4_10_exp"
+	flatcar1_0 "github.com/coreos/butane/config/flatcar/v1_0"
+	flatcar1_1_exp "github.com/coreos/butane/config/flatcar/v1_1_exp"
+	openshift4_10 "github.com/coreos/butane/config/openshift/v4_10"
+	openshift4_11 "github.com/coreos/butane/config/openshift/v4_11"
+	openshift4_12_exp "github.com/coreos/butane/config/openshift/v4_12_exp"
 	openshift4_8 "github.com/coreos/butane/config/openshift/v4_8"
 	openshift4_9 "github.com/coreos/butane/config/openshift/v4_9"
 	rhcos0_1 "github.com/coreos/butane/config/rhcos/v0_1"
@@ -51,9 +55,13 @@ func init() {
 	RegisterTranslator("fcos", "1.3.0", fcos1_3.ToIgn3_2Bytes)
 	RegisterTranslator("fcos", "1.4.0", fcos1_4.ToIgn3_3Bytes)
 	RegisterTranslator("fcos", "1.5.0-experimental", fcos1_5_exp.ToIgn3_4Bytes)
+	RegisterTranslator("flatcar", "1.0.0", flatcar1_0.ToIgn3_3Bytes)
+	RegisterTranslator("flatcar", "1.1.0-experimental", flatcar1_1_exp.ToIgn3_4Bytes)
 	RegisterTranslator("openshift", "4.8.0", openshift4_8.ToConfigBytes)
 	RegisterTranslator("openshift", "4.9.0", openshift4_9.ToConfigBytes)
-	RegisterTranslator("openshift", "4.10.0-experimental", openshift4_10_exp.ToConfigBytes)
+	RegisterTranslator("openshift", "4.10.0", openshift4_10.ToConfigBytes)
+	RegisterTranslator("openshift", "4.11.0", openshift4_11.ToConfigBytes)
+	RegisterTranslator("openshift", "4.12.0-experimental", openshift4_12_exp.ToConfigBytes)
 	RegisterTranslator("rhcos", "0.1.0", rhcos0_1.ToIgn3_2Bytes)
 }
 
@@ -77,14 +85,14 @@ func getTranslator(variant string, version semver.Version) (translator, error) {
 }
 
 // translators take a raw config and translate it to a raw Ignition config. The report returned should include any
-// errors, warnings, etc and may or may not be fatal. If report is fatal, or other errors are encountered while translating
+// errors, warnings, etc. and may or may not be fatal. If report is fatal, or other errors are encountered while translating
 // translators should return an error.
 type translator func([]byte, common.TranslateBytesOptions) ([]byte, report.Report, error)
 
 // TranslateBytes wraps all of the individual TranslateBytes functions in a switch that determines the correct one to call.
 // TranslateBytes returns an error if the report had fatal errors or if other errors occured during translation.
 func TranslateBytes(input []byte, options common.TranslateBytesOptions) ([]byte, report.Report, error) {
-	// first determine version. This will ignore most fields, so don't use strict
+	// first determine version; this will ignore most fields
 	ver := commonFields{}
 	if err := yaml.Unmarshal(input, &ver); err != nil {
 		return nil, report.Report{}, fmt.Errorf("Error unmarshaling yaml: %v", err)

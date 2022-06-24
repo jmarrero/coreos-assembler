@@ -15,7 +15,10 @@
 package v1_5_exp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 
 	baseutil "github.com/coreos/butane/base/util"
 	"github.com/coreos/butane/config/common"
@@ -26,21 +29,18 @@ import (
 	"github.com/coreos/ignition/v2/config/v3_4_experimental/types"
 	"github.com/coreos/vcontext/path"
 	"github.com/coreos/vcontext/report"
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	biosTypeGuid = "21686148-6449-6E6F-744E-656564454649"
-	prepTypeGuid = "9E1A2D38-C612-4316-AA26-8B49521E5A8B"
-	espTypeGuid  = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+	reservedTypeGuid = "8DA63339-0007-60C0-C436-083AC8230908"
+	biosTypeGuid     = "21686148-6449-6E6F-744E-656564454649"
+	prepTypeGuid     = "9E1A2D38-C612-4316-AA26-8B49521E5A8B"
+	espTypeGuid      = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 
 	// The partition layout implemented in this file replicates
 	// the layout of the OS image defined in:
 	// https://github.com/coreos/coreos-assembler/blob/main/src/create_disk.sh
-	//
-	// Exception: we don't try to skip unused partition numbers,
-	// because specifying a partition number would prevent child
-	// configs from overriding partition fields using the partition
-	// label as the lookup key.
 	//
 	// It's not critical that we match that layout exactly; the hard
 	// constraints are:
@@ -51,10 +51,11 @@ const (
 	//
 	// Do not change these constants!  New partition layouts must be
 	// encoded into new layout templates.
-	biosV1SizeMiB = 1
-	prepV1SizeMiB = 4
-	espV1SizeMiB  = 127
-	bootV1SizeMiB = 384
+	reservedV1SizeMiB = 1
+	biosV1SizeMiB     = 1
+	prepV1SizeMiB     = 4
+	espV1SizeMiB      = 127
+	bootV1SizeMiB     = 384
 )
 
 // ToIgn3_4Unvalidated translates the config to an Ignition config.  It also
@@ -67,6 +68,30 @@ func (c Config) ToIgn3_4Unvalidated(options common.TranslateOptions) (types.Conf
 		return types.Config{}, translate.TranslationSet{}, r
 	}
 	r.Merge(c.processBootDevice(&ret, &ts, options))
+	for i, disk := range ret.Storage.Disks {
+		// In the boot_device.mirror case, nothing specifies partition numbers
+		// so match existing partitions only when `wipeTable` is false
+		if !util.IsTrue(disk.WipeTable) {
+			for j, partition := range disk.Partitions {
+				// check for reserved partlabels
+				if partition.Label != nil {
+					if (*partition.Label == "BIOS-BOOT" && partition.Number != 1) || (*partition.Label == "PowerPC-PReP-boot" && partition.Number != 1) || (*partition.Label == "EFI-SYSTEM" && partition.Number != 2) || (*partition.Label == "boot" && partition.Number != 3) || (*partition.Label == "root" && partition.Number != 4) {
+						r.AddOnWarn(path.New("json", "storage", "disks", i, "partitions", j, "label"), common.ErrWrongPartitionNumber)
+					}
+				}
+			}
+		}
+	}
+
+	retp, tsp, rp := c.processPackages(options)
+	retConfig, ts := baseutil.MergeTranslatedConfigs(retp, tsp, ret, ts)
+	ret = retConfig.(types.Config)
+	r.Merge(rp)
+
+	retp, tsp, rp = c.handleUserGrubCfg(options)
+	retConfig, ts = baseutil.MergeTranslatedConfigs(retp, tsp, ret, ts)
+	ret = retConfig.(types.Config)
+	r.Merge(rp)
 	return ret, ts, r
 }
 
@@ -131,12 +156,17 @@ func (c Config) processBootDevice(config *types.Config, ts *translate.Translatio
 					SizeMiB:  util.IntToPtr(biosV1SizeMiB),
 					TypeGUID: util.StrToPtr(biosTypeGuid),
 				})
-			}
-			if wantPRePPart {
+			} else if wantPRePPart {
 				disk.Partitions = append(disk.Partitions, types.Partition{
 					Label:    util.StrToPtr(fmt.Sprintf("prep-%d", labelIndex)),
 					SizeMiB:  util.IntToPtr(prepV1SizeMiB),
 					TypeGUID: util.StrToPtr(prepTypeGuid),
+				})
+			} else {
+				disk.Partitions = append(disk.Partitions, types.Partition{
+					Label:    util.StrToPtr(fmt.Sprintf("reserved-%d", labelIndex)),
+					SizeMiB:  util.IntToPtr(reservedV1SizeMiB),
+					TypeGUID: util.StrToPtr(reservedTypeGuid),
 				})
 			}
 			if wantEFIPart {
@@ -144,6 +174,12 @@ func (c Config) processBootDevice(config *types.Config, ts *translate.Translatio
 					Label:    util.StrToPtr(fmt.Sprintf("esp-%d", labelIndex)),
 					SizeMiB:  util.IntToPtr(espV1SizeMiB),
 					TypeGUID: util.StrToPtr(espTypeGuid),
+				})
+			} else {
+				disk.Partitions = append(disk.Partitions, types.Partition{
+					Label:    util.StrToPtr(fmt.Sprintf("reserved-%d", labelIndex)),
+					SizeMiB:  util.IntToPtr(reservedV1SizeMiB),
+					TypeGUID: util.StrToPtr(reservedTypeGuid),
 				})
 			}
 			disk.Partitions = append(disk.Partitions, types.Partition{
@@ -269,4 +305,112 @@ func translateBootDeviceLuks(from BootDeviceLuks, options common.TranslateOption
 	// translation ourselves
 	tm.AddTranslation(path.New("yaml"), path.New("json"))
 	return
+}
+
+func (c Config) processPackages(options common.TranslateOptions) (types.Config, translate.TranslationSet, report.Report) {
+	yamlPath := path.New("yaml", "extensions")
+	ret := types.Config{}
+	ts := translate.NewTranslationSet("yaml", "json")
+	var r report.Report
+	if len(c.Extensions) == 0 {
+		return ret, ts, r
+	}
+	var extensions []string
+	for _, ex := range c.Extensions {
+		extensions = append(extensions, ex.Name)
+	}
+	treeFileContents, err := yaml.Marshal(&struct {
+		Packages []string `yaml:"packages"`
+	}{
+		Packages: extensions,
+	})
+	if err != nil {
+		r.AddOnError(yamlPath, err)
+		return ret, ts, r
+	}
+	fullYamlContents := append([]byte("# Generated by Butane\n\n"), treeFileContents...)
+	src, compression, err := baseutil.MakeDataURL(fullYamlContents, nil, !options.NoResourceAutoCompression)
+	if err != nil {
+		r.AddOnError(yamlPath, err)
+		return ret, ts, r
+	}
+	hash := sha256.New()
+	hash.Write([]byte(src))
+	sha := hex.EncodeToString(hash.Sum(nil))[0:7]
+	file := types.File{
+		Node: types.Node{
+			Path: "/etc/rpm-ostree/origin.d/extensions-" + sha + ".yaml",
+		},
+		FileEmbedded1: types.FileEmbedded1{
+			Contents: types.Resource{
+				Source:      &src,
+				Compression: compression,
+			},
+			Mode: util.IntToPtr(0644),
+		},
+	}
+
+	ret.Storage.Files = append(ret.Storage.Files, file)
+	ts.AddFromCommonSource(yamlPath, path.New("json", "storage"), ret.Storage)
+	return ret, ts, r
+}
+
+func (c Config) handleUserGrubCfg(options common.TranslateOptions) (types.Config, translate.TranslationSet, report.Report) {
+	rendered := types.Config{}
+	ts := translate.NewTranslationSet("yaml", "json")
+	var r report.Report
+	yamlPath := path.New("yaml", "grub", "users")
+	if len(c.Grub.Users) == 0 {
+		// No users
+		return rendered, ts, r
+	}
+
+	// create boot filesystem
+	rendered.Storage.Filesystems = append(rendered.Storage.Filesystems,
+		types.Filesystem{
+			Device: "/dev/disk/by-label/boot",
+			Format: util.StrToPtr("ext4"),
+			Path:   util.StrToPtr("/boot"),
+		})
+
+	userCfgContent := []byte(buildGrubConfig(c.Grub))
+	src, compression, err := baseutil.MakeDataURL(userCfgContent, nil, !options.NoResourceAutoCompression)
+	if err != nil {
+		r.AddOnError(yamlPath, err)
+		return rendered, ts, r
+	}
+
+	// Create user.cfg file and add it to rendered config
+	rendered.Storage.Files = append(rendered.Storage.Files,
+		types.File{
+			Node: types.Node{
+				Path: "/boot/grub2/user.cfg",
+			},
+			FileEmbedded1: types.FileEmbedded1{
+				Append: []types.Resource{
+					{
+						Source:      util.StrToPtr(src),
+						Compression: compression,
+					},
+				},
+			},
+		})
+
+	ts.AddFromCommonSource(yamlPath, path.New("json", "storage"), rendered.Storage)
+	return rendered, ts, r
+}
+
+func buildGrubConfig(gb Grub) string {
+	// Process super users and corresponding passwords
+	allUsers := []string{}
+	cmds := []string{}
+
+	for _, user := range gb.Users {
+		// We have already validated that user.Name and user.PasswordHash are non-empty
+		allUsers = append(allUsers, user.Name)
+		// Command for setting users password
+		cmds = append(cmds, fmt.Sprintf("password_pbkdf2 %s %s", user.Name, *user.PasswordHash))
+	}
+	superUserCmd := fmt.Sprintf("set superusers=\"%s\"\n", strings.Join(allUsers, " "))
+	return "# Generated by Butane\n\n" + superUserCmd + strings.Join(cmds, "\n") + "\n"
 }
