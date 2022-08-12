@@ -6,10 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
-
-	"github.com/google/renameio"
 )
 
 // Fetch an artifact, validating its checksum.  If applicable,
@@ -42,8 +41,8 @@ func (a *Artifact) Fetch(w io.Writer) error {
 	return nil
 }
 
-/// Name returns the "basename" of the artifact, i.e. the contents
-/// after the last `/`.  This can be useful when downloading to a file.
+// Name returns the "basename" of the artifact, i.e. the contents
+// after the last `/`.  This can be useful when downloading to a file.
 func (a *Artifact) Name() (string, error) {
 	loc, err := url.Parse(a.Location)
 	if err != nil {
@@ -53,36 +52,44 @@ func (a *Artifact) Name() (string, error) {
 	return path.Base(loc.Path), nil
 }
 
-/// Download fetches the specified artifact and saves it to the target
-/// directory.  The full file path will be returned as a string.
-/// If the target file path exists, it will be overwritten.
-/// If the download fails, the temporary file will be deleted.
+// Download fetches the specified artifact and saves it to the target
+// directory.  The full file path will be returned as a string.
+// If the target file path exists, it will be overwritten.
+// If the download fails, the temporary file will be deleted.
 func (a *Artifact) Download(destdir string) (string, error) {
 	name, err := a.Name()
 	if err != nil {
 		return "", err
 	}
 	destfile := filepath.Join(destdir, name)
-	w, err := renameio.TempFile("", destfile)
+	w, err := os.CreateTemp(destdir, ".coreos-artifact-")
 	if err != nil {
 		return "", err
 	}
-
+	finalized := false
 	defer func() {
-		// Ignore an error to unlink
-		_ = w.Cleanup()
+		if !finalized {
+			// Ignore an error to unlink
+			_ = os.Remove(w.Name())
+		}
 	}()
-	err = a.Fetch(w)
-	if err != nil {
+
+	if err := a.Fetch(w); err != nil {
 		return "", err
 	}
-	if err := w.File.Chmod(0644); err != nil {
+	if err := w.Sync(); err != nil {
 		return "", err
 	}
-	err = w.CloseAtomicallyReplace()
-	if err != nil {
+	if err := w.Chmod(0644); err != nil {
 		return "", err
 	}
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Rename(w.Name(), destfile); err != nil {
+		return "", err
+	}
+	finalized = true
 
 	return destfile, nil
 }
