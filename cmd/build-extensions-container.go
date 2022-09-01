@@ -15,6 +15,7 @@ import (
 )
 
 func buildExtensionContainer() error {
+	arch := cosa.BuilderArch()
 	sh, err := cosash.NewCosaSh()
 	if err != nil {
 		return err
@@ -22,7 +23,8 @@ func buildExtensionContainer() error {
 	if _, err := sh.PrepareBuild(); err != nil {
 		return err
 	}
-	sh.Process("runvm -- /usr/lib/coreos-assembler/build-extensions-oscontainer.sh $tmp_builddir/output.txt")
+	process := "runvm -- /usr/lib/coreos-assembler/build-extensions-oscontainer.sh " + arch + " $tmp_builddir/output.txt"
+	sh.Process(process)
 	tmpdir, err := sh.ProcessWithReply("echo $tmp_builddir>&3\n")
 	if err != nil {
 		return err
@@ -31,7 +33,6 @@ func buildExtensionContainer() error {
 	if err != nil {
 		return err
 	}
-	arch := cosa.BuilderArch()
 	ociarchive := strings.TrimSpace(string(content))
 	workdir := getWorkDir(ociarchive)
 	lastBuild, _, err := cosa.ReadBuild(workdir+"/builds", "latest", arch)
