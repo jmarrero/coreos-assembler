@@ -394,7 +394,7 @@ func pushOstreeToRegistry(ctx ClusterContext, push *spec.Registry, build *cosa.B
 
 	// pushArgs invokes cosa upload code which creates a named tag
 	pushArgs := []string{
-		"/usr/bin/coreos-assembler", "upload-oscontainer",
+		"/usr/bin/coreos-assembler", "create-legacy-oscontainer",
 		fmt.Sprintf("--name=%s", pushPath),
 	}
 	// copy the pushed image to the expected tag

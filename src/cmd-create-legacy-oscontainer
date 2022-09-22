@@ -12,24 +12,13 @@ import os
 import shutil
 import subprocess
 import sys
+from cosalib.cmdlib import sha256sum_file
 
 cosa_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, cosa_dir)
 
 from cosalib import cmdlib
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--arch-tag", help="append arch name to push tag",
-                    action='store_true')
-parser.add_argument("--name", help="oscontainer name",
-                    action='store', required=True)
-parser.add_argument("--from", help="Base image", default='scratch',
-                    dest='from_image')
-parser.add_argument("--format", help="Format to use for push")
-parser.add_argument("--add-directory", help="Copy in all content from referenced directory DIR",
-                    metavar='DIR', action='append', default=[])
-
-args = parser.parse_args()
 
 with open('builds/builds.json') as f:
     builds = json.load(f)['builds']
@@ -42,6 +31,20 @@ latest_build_path = f"builds/{latest_build}/{arch}"
 metapath = f"{latest_build_path}/meta.json"
 with open(metapath) as f:
     meta = json.load(f)
+
+name = meta['name'] + '-' + meta['buildid'] + '-oscontainer.' + arch + '.ociarchive'
+parser = argparse.ArgumentParser()
+parser.add_argument("--arch-tag", help="append arch name to push tag",
+                    action='store_true')
+parser.add_argument("--name", help="oscontainer name",
+                    action='store', default=f'{name}')
+parser.add_argument("--from", help="Base image", default='scratch',
+                    dest='from_image')
+parser.add_argument("--format", help="Format to use for push")
+parser.add_argument("--add-directory", help="Copy in all content from referenced directory DIR",
+                    metavar='DIR', action='append', default=[])
+
+args = parser.parse_args()
 
 # for backcompat, we auto-build extensions if they're missing
 if os.path.exists('src/config/extensions.yaml'):
@@ -101,19 +104,15 @@ if args.arch_tag:
 # every time we want to poll.
 # TODO: Remove --from
 digestfile = "tmp/oscontainer-digest"
-# We need to pass the auth file from the unpriv user to the root process
-cosa_argv = ['sudo', '--preserve-env=container,DISABLE_TLS_VERIFICATION,SSL_CERT_DIR,SSL_CERT_FILE,REGISTRY_AUTH_FILE,OSCONTAINER_CERT_DIR']
-authfile = os.environ.get("REGISTRY_AUTH_FILE", os.path.expanduser('~/.docker/config.json'))
-if not os.path.isfile(authfile):
-    raise SystemExit(f"Missing {authfile}")
-os.environ['REGISTRY_AUTH_FILE'] = authfile
-cosa_argv.extend(['/usr/lib/coreos-assembler/oscontainer.py', '--workdir=./tmp', 'build',  f"--from={args.from_image}"])
+print("Entering vm to build oscontainer for build: {}".format(latest_build))
+
+cosa_argv = (['/usr/lib/coreos-assembler/build-legacy-oscontainer.sh', '--workdir=./tmp', 'build', f'--from={args.from_image}'])
 for d in args.add_directory:
-    cosa_argv.append(f"--add-directory={d}")
-cosa_argv.append(f"--display-name={display_name}")
+    cosa_argv.append(f'--add-directory="{d}"')
+cosa_argv.append(f'--display-name="{display_name}"')
 if 'labeled-packages' in configyaml:
     pkgs = ' '.join(configyaml['labeled-packages'])
-    cosa_argv.append(f"--labeled-packages={pkgs}")
+    cosa_argv.append(f'--labeled-packages="{pkgs}"')
 if args.format is not None:
     cosa_argv.append(f'--format={args.format}')
 subprocess.check_call(cosa_argv +
@@ -122,12 +121,12 @@ subprocess.check_call(cosa_argv +
         meta['ostree-commit'],
         osc_name_and_tag])
 
-with open(digestfile) as f:
-    osc_digest = f.read().strip()
-
 # Inject the oscontainer with SHA256 into the build metadata
-meta['oscontainer'] = {'image': args.name,
-                       'digest': osc_digest}
+oci_archive = f"{latest_build_path}/{args.name}"
+meta['images']['legacy-oscontainer'] = {'path': args.name,
+                                        'sha256': sha256sum_file(oci_archive),
+                                        'size': os.path.getsize(oci_archive),
+                                        "skip-compression": True}
 metapath_new = f"{metapath}.new"
 with open(metapath_new, 'w') as f:
     json.dump(meta, f, sort_keys=True)
