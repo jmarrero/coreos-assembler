@@ -101,19 +101,24 @@ if args.arch_tag:
 # every time we want to poll.
 # TODO: Remove --from
 digestfile = "tmp/oscontainer-digest"
-# We need to pass the auth file from the unpriv user to the root process
-cosa_argv = ['sudo', '--preserve-env=container,DISABLE_TLS_VERIFICATION,SSL_CERT_DIR,SSL_CERT_FILE,REGISTRY_AUTH_FILE,OSCONTAINER_CERT_DIR']
-authfile = os.environ.get("REGISTRY_AUTH_FILE", os.path.expanduser('~/.docker/config.json'))
-if not os.path.isfile(authfile):
-    raise SystemExit(f"Missing {authfile}")
-os.environ['REGISTRY_AUTH_FILE'] = authfile
-cosa_argv.extend(['/usr/lib/coreos-assembler/oscontainer.py', '--workdir=./tmp', 'build',  f"--from={args.from_image}"])
+print("Entering vm to build oscontainer for build: {}".format(latest_build))
+arguments = ''
 for d in args.add_directory:
-    cosa_argv.append(f"--add-directory={d}")
-cosa_argv.append(f"--display-name={display_name}")
+    arguments = arguments + (f' --add-directory="{d}"')
+arguments = arguments + (f' --display-name="{display_name}"')
 if 'labeled-packages' in configyaml:
     pkgs = ' '.join(configyaml['labeled-packages'])
-    cosa_argv.append(f"--labeled-packages={pkgs}")
+    arguments = arguments + (f' --labeled-packages="{pkgs}"')
+if args.format is not None:
+    arguments = arguments + (f' --format="{args.format}"')
+
+cosa_argv = (['/usr/lib/coreos-assembler/build-legacy-oscontainer.sh', '--workdir=./tmp', 'build', f'--from={args.from_image}'])
+for d in args.add_directory:
+    cosa_argv.append(f'--add-directory="{d}"')
+cosa_argv.append(f'--display-name="{display_name}"')
+if 'labeled-packages' in configyaml:
+    pkgs = ' '.join(configyaml['labeled-packages'])
+    cosa_argv.append(f'--labeled-packages="{pkgs}"')
 if args.format is not None:
     cosa_argv.append(f'--format={args.format}')
 subprocess.check_call(cosa_argv +

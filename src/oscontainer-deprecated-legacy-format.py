@@ -20,9 +20,6 @@ import os
 import shutil
 import subprocess
 from cosalib import cmdlib
-from cosalib.buildah import (
-    buildah_base_args
-)
 
 OSCONTAINER_COMMIT_LABEL = 'com.coreos.ostree-commit'
 
@@ -108,7 +105,7 @@ def oscontainer_build(containers_storage, tmpdir, src, ref, image_name_and_tag,
     else:
         ostree_version = None
 
-    buildah_base_argv = buildah_base_args(containers_storage)
+    buildah_base_argv = ['buildah']
 
     # In general, we just stick with the default tmpdir set up. But if a
     # workdir is provided, then we want to be sure that all the heavy I/O work
@@ -207,19 +204,8 @@ def oscontainer_build(containers_storage, tmpdir, src, ref, image_name_and_tag,
         subprocess.call(buildah_base_argv + ['rm', bid], stdout=subprocess.DEVNULL)
 
     if push:
-        print("Pushing container")
+        print("Pushing container to oci-archive")
         podCmd = buildah_base_argv + ['push']
-        if not tls_verify:
-            tls_arg = '--tls-verify=false'
-        else:
-            tls_arg = '--tls-verify'
-        podCmd.append(tls_arg)
-
-        if authfile != "":
-            podCmd.append("--authfile={}".format(authfile))
-
-        if cert_dir != "":
-            podCmd.append("--cert-dir={}".format(cert_dir))
 
         if digestfile is not None:
             podCmd.append(f'--digestfile={digestfile}')
@@ -228,6 +214,8 @@ def oscontainer_build(containers_storage, tmpdir, src, ref, image_name_and_tag,
             podCmd.append(f'--format={pushformat}')
 
         podCmd.append(image_name_and_tag)
+
+        podCmd.append(f'oci-archive:{builddir}/{image_name_and_tag}')
 
         cmdlib.runcmd(podCmd)
     elif digestfile is not None:
