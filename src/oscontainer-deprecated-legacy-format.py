@@ -213,6 +213,9 @@ def oscontainer_build(containers_storage, tmpdir, src, ref, image_name_and_tag,
         if pushformat is not None:
             podCmd.append(f'--format={pushformat}')
 
+        if '/' in image_name_and_tag:
+            image_name_and_tag = image_name_and_tag.rsplit('/', 1)[1]
+
         podCmd.append(image_name_and_tag)
 
         podCmd.append(f'oci-archive:{builddir}/{image_name_and_tag}')
