@@ -6,6 +6,7 @@
 # command.
 
 import argparse
+import hashlib
 import json
 import yaml
 import os
@@ -18,18 +19,6 @@ sys.path.insert(0, cosa_dir)
 
 from cosalib import cmdlib
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--arch-tag", help="append arch name to push tag",
-                    action='store_true')
-parser.add_argument("--name", help="oscontainer name",
-                    action='store', required=True)
-parser.add_argument("--from", help="Base image", default='scratch',
-                    dest='from_image')
-parser.add_argument("--format", help="Format to use for push")
-parser.add_argument("--add-directory", help="Copy in all content from referenced directory DIR",
-                    metavar='DIR', action='append', default=[])
-
-args = parser.parse_args()
 
 with open('builds/builds.json') as f:
     builds = json.load(f)['builds']
@@ -42,6 +31,20 @@ latest_build_path = f"builds/{latest_build}/{arch}"
 metapath = f"{latest_build_path}/meta.json"
 with open(metapath) as f:
     meta = json.load(f)
+
+name = meta['name'] + '-' + meta['buildid'] + '-oscontainer.' + arch + '.ociarchive'
+parser = argparse.ArgumentParser()
+parser.add_argument("--arch-tag", help="append arch name to push tag",
+                    action='store_true')
+parser.add_argument("--name", help="oscontainer name",
+                    action='store', default=f'{name}')
+parser.add_argument("--from", help="Base image", default='scratch',
+                    dest='from_image')
+parser.add_argument("--format", help="Format to use for push")
+parser.add_argument("--add-directory", help="Copy in all content from referenced directory DIR",
+                    metavar='DIR', action='append', default=[])
+
+args = parser.parse_args()
 
 # for backcompat, we auto-build extensions if they're missing
 if os.path.exists('src/config/extensions.yaml'):
@@ -131,8 +134,15 @@ with open(digestfile) as f:
     osc_digest = f.read().strip()
 
 # Inject the oscontainer with SHA256 into the build metadata
-meta['oscontainer'] = {'image': args.name,
-                       'digest': osc_digest}
+sha256 = hashlib.sha256()
+with open(f"{latest_build_path}/{args.name}", "rb") as f:
+    for b in iter(lambda: f.read(4096), b""):
+        sha256.update(b)
+size_bytes = os.path.getsize(f"{latest_build_path}/{args.name}")
+meta['images']['oscontainer'] = {'path': args.name,
+                                 'sha256': sha256.hexdigest(),
+                                 'size': size_bytes}
+
 metapath_new = f"{metapath}.new"
 with open(metapath_new, 'w') as f:
     json.dump(meta, f, sort_keys=True)
