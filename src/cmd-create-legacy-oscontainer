@@ -139,10 +139,11 @@ with open(f"{latest_build_path}/{args.name}", "rb") as f:
     for b in iter(lambda: f.read(4096), b""):
         sha256.update(b)
 size_bytes = os.path.getsize(f"{latest_build_path}/{args.name}")
-meta['images']['oscontainer'] = {'path': args.name,
-                                 'sha256': sha256.hexdigest(),
-                                 'size': size_bytes}
-
+meta['images']['legacy-oscontainer'] = {'path': args.name,
+                                        'sha256': sha256.hexdigest(),
+                                        'size': size_bytes}
+meta['oscontainer'] = {'image': args.name,
+                       'digest': osc_digest}
 metapath_new = f"{metapath}.new"
 with open(metapath_new, 'w') as f:
     json.dump(meta, f, sort_keys=True)

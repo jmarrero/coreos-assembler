@@ -215,6 +215,7 @@
     "images",
     "koji",
     "oscontainer",
+    "legacy-oscontainer",
     "extensions",
     "extensions-container",
     "parent-pkgdiff",
@@ -439,7 +440,7 @@
         "dasd",
         "digitalocean",
         "exoscale",
-        "oscontainer",
+        "legacy-oscontainer",
         "extensions-container",
         "gcp",
         "kubevirt",
@@ -481,10 +482,10 @@
           "title": "exoscale",
           "$ref": "#/definitions/artifact"
         },
-        "oscontainer": {
-          "$id": "#/properties/images/properties/oscontainer",
+        "legacy-oscontainer": {
+          "$id": "#/properties/images/properties/legacy-oscontainer",
           "type": "object",
-          "title": "oscontainer",
+          "title": "legacy-oscontainer",
           "$ref": "#/definitions/artifact"
         },
         "extensions-container": {
@@ -654,6 +655,12 @@
         "rhcos",
         "fedora-coreos"
       ]
+    },
+    "oscontainer": {
+      "$id": "#/properties/oscontainer",
+      "type": "object",
+      "title": "Oscontainer",
+      "$ref": "#/definitions/image"
     },
     "extensions": {
       "$id": "#/properties/extensions",
@@ -881,8 +888,8 @@
         }
       }
     },
-    "oscontainer": {
-      "$id": "#/properties/oscontainer",
+    "legacy-oscontainer": {
+      "$id": "#/properties/legacy-oscontainer",
       "type": "object",
       "title": "Legacy oscontainer",
       "required": [
@@ -890,7 +897,7 @@
       ],
       "properties": {
         "image": {
-          "$id": "#/properties/oscontainer/image",
+          "$id": "#/properties/legacy-oscontainer/image",
           "type": "string",
           "title": "Image"
         }
